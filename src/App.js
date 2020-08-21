@@ -1,6 +1,8 @@
 import React from 'react';
 import { Button, Grid, Segment, Divider, Select, Dimmer, Loader, Header, Label, Card } from 'semantic-ui-react';
 import './App.css';
+import { v4 as uuidv4 } from 'uuid';
+import querystring from 'querystring';
 
 export default class App extends React.Component {
   state = {
@@ -59,8 +61,16 @@ export default class App extends React.Component {
   };
   videoRefs = {};
   hostPeer = null;
+  uuid = null;
 
+  // join a given lobby
   async componentDidMount() {
+    // Load UUID from url
+    let query = querystring.parse(window.location.search.substring(1));
+    if (query.id) {
+      this.uuid = query.id;
+      this.join();
+    }
     // video chat
     // "bring your own file"
     // now playing
@@ -69,37 +79,35 @@ export default class App extends React.Component {
   }
 
   host = () => {
+    // create lobby id, move to the lobby
+    this.uuid = uuidv4();
+    window.history.pushState('', '', window.location.href + '?id=' + this.uuid);
     // set media to first watchoption
     this.setState({ currentMedia: this.state.watchOptions[0] }, () => {
-      // set media to current media
-      this.setMedia(null, { value: this.state.currentMedia });
-      // create and set host
-      const host = new window.Peer('watchparty-host');
-      this.hostPeer = host;
-
-      // on call, send stream
-      this.setState({ isHost: true }, () => {
-        host.on('call', (call) => {
-          // capture video stream
-          const leftVideo = document.getElementById('leftVideo');
-          let stream = leftVideo.captureStream();
-          call.answer(stream);
-          // show stream in video element
-          call.on('stream', (remoteStream) => {
-            this.state.participants[call.peer] = remoteStream;
-            this.setState(this.state.participants);
-            console.log(this.state.participants);
+      this.setMedia(null, { value: this.state.currentMedia }, () => {
+        const leftVideo = document.getElementById('leftVideo');
+        let stream = leftVideo.captureStream();
+        const host = new window.Peer(this.uuid);
+        this.hostPeer = host;
+        console.log(host, stream, stream.getAudioTracks(), stream.getVideoTracks());
+        this.setState({ isHost: true }, () => {
+          host.on('call', (call) => {
+            call.answer(stream);
+            call.on('stream', (remoteStream) => {
+              this.state.participants[call.peer] = remoteStream;
+              this.setState(this.state.participants);
+              console.log(this.state.participants);
+            });
           });
-        });
-        // on connection, join the session
-        host.on('open', () => {
-          this.join();
+          host.on('open', () => {
+            this.join();
+          });
         });
       });
     });
   }
 
-  setMedia = async (e, data) => {
+  setMedia = async (e, data, cb) => {
     const leftVideo = document.getElementById('leftVideo');
     this.playerElement.src = '/media/' + data.value;
     leftVideo.muted = true;
@@ -107,6 +115,7 @@ export default class App extends React.Component {
     // replace video w/ 
     const replaceVideo = () => {
       let stream = leftVideo.captureStream();
+      // host the uuid channel
       if (this.hostPeer && this.hostPeer.connections) {
         Object.keys(this.hostPeer.connections).forEach(key => {
           const connection = this.hostPeer.connections[key][0];
@@ -127,6 +136,9 @@ export default class App extends React.Component {
       this.setState({currentMedia: data.value });
       // remove the replacevideo eventlistener
       leftVideo.removeEventListener('loadeddata', replaceVideo);
+      if (cb) {
+        cb();
+      }
     };
     leftVideo.addEventListener('loadeddata', replaceVideo);
   }
@@ -164,9 +176,10 @@ export default class App extends React.Component {
 
       let blackSilence = (...args) => new MediaStream([black(...args), silence()]);
 
-      var call = peer.call('watchparty-host', blackSilence());
+      var call = peer.call(this.uuid, blackSilence());
       // grab stream and put into right video
       call.on('stream', (remoteStream) => {
+        console.log(remoteStream);
         window.testStream = remoteStream;
         rightVideo.srcObject = remoteStream;
         this.setState({ watchPartyActive: true });
